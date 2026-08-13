@@ -1,0 +1,19 @@
+# Uploading and shortening
+requests==2.32.5
+requests-toolbelt==1.0.0
+
+# Local server behind the window
+fastapi==0.121.2
+uvicorn==0.42.0
+python-multipart==0.0.20
+
+# The native window.
+#
+# PyGObject is deliberately NOT listed. Building it from source needs cairo and
+# girepository development headers, and every Linux desktop already ships a
+# working copy. The virtualenv is created with --system-site-packages so
+# pywebview finds the system one -- see run.sh.
+#
+# If `import gi` fails, install it from your package manager:
+#   sudo apt install python3-gi gir1.2-webkit2-4.1
+pywebview==6.2.1

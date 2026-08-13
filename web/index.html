@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FileUploader</title>
+<style>
+  :root {
+    --ground:   #f2f3f5;
+    --surface:  #ffffff;
+    --raised:   #e9ebef;
+    --line:     #d5d9e0;
+    --text:     #171a21;
+    --muted:    #6b7383;
+    --faint:    #939bab;
+    --ember:    #d9701f;
+    --ember-dim:#f0dcc8;
+    --mint:     #2f8f66;
+    --alarm:    #c0392b;
+    --focus:    #2f6ff0;
+    --radius:   7px;
+    --mono: "JetBrains Mono", "Fira Code", "Ubuntu Mono", ui-monospace, monospace;
+    --sans: Inter, "SF Pro Text", Cantarell, Ubuntu, system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:   #14171d;
+      --surface:  #1b1f27;
+      --raised:   #232833;
+      --line:     #2f3542;
+      --text:     #e8eaef;
+      --muted:    #949dae;
+      --faint:    #6d7686;
+      --ember:    #e8853c;
+      --ember-dim:#3a2c1e;
+      --mint:     #4fb286;
+      --alarm:    #e06c5d;
+      --focus:    #5b8cff;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+
+  /* ---------------------------------------------------------------- chrome */
+
+  .bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .wordmark {
+    font-size: 12px; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase;
+  }
+  .wordmark span { color: var(--ember); }
+  .ghost {
+    background: none; border: 0; cursor: pointer;
+    font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--muted); padding: 5px 8px; border-radius: 5px;
+  }
+  .ghost:hover { color: var(--text); background: var(--raised); }
+
+  main { padding: 22px; max-width: 640px; margin: 0 auto; }
+
+  .label {
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 0.15em; text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 9px;
+  }
+
+  /* ----------------------------------------------------------------- modes */
+
+  .modes {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2px;
+    background: var(--raised); padding: 2px; border-radius: var(--radius);
+    margin-bottom: 20px;
+  }
+  .modes button {
+    background: none; border: 0; cursor: pointer;
+    padding: 8px; border-radius: 5px;
+    font-size: 13px; color: var(--muted);
+  }
+  .modes button[aria-selected="true"] {
+    background: var(--surface); color: var(--text); font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0,0,0,.09);
+  }
+
+  /* ------------------------------------------------------------ pick / text */
+
+  .well {
+    border: 1.5px dashed var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 34px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .12s, background .12s;
+  }
+  .well:hover, .well.hot { border-color: var(--ember); background: var(--ember-dim); }
+  .well strong { display: block; font-size: 15px; font-weight: 600; }
+  .well em { display: block; font-style: normal; color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .well.loaded { border-style: solid; border-color: var(--ember); text-align: left; padding: 16px 18px; }
+  .well.loaded strong { font-family: var(--mono); font-size: 13.5px; word-break: break-all; }
+
+  textarea {
+    width: 100%; min-height: 148px; resize: vertical;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 13px;
+    font-family: var(--mono); font-size: 13px; line-height: 1.55;
+  }
+  .field {
+    width: 100%; background: var(--surface);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 9px 12px;
+  }
+  textarea:focus, .field:focus { outline: none; border-color: var(--focus); }
+
+  .stack { margin-bottom: 20px; }
+
+  /* -------------------------------------------------------------- the fuse */
+  /* The expiry is the point of the app, so it is the loudest control here:
+     a track read left-to-right as duration, not a dropdown. */
+
+  .fuse { position: relative; padding-top: 5px; }
+  .fuse-track {
+    position: relative; height: 2px; background: var(--line);
+    margin: 0 6px 0; border-radius: 2px;
+  }
+  .fuse-lit {
+    position: absolute; left: 0; top: 0; height: 100%;
+    background: var(--ember); border-radius: 2px;
+    transition: width .18s ease;
+  }
+  .fuse-marks {
+    display: grid; margin-top: -5px;
+  }
+  .fuse-marks button {
+    background: none; border: 0; cursor: pointer; padding: 0 0 4px;
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+  }
+  .notch {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ground); border: 2px solid var(--line);
+    transition: border-color .15s, background .15s, transform .15s;
+  }
+  .fuse-marks button:hover .notch { border-color: var(--ember); }
+  .fuse-marks button[aria-checked="true"] .notch {
+    border-color: var(--ember); background: var(--ember); transform: scale(1.3);
+  }
+  .fuse-marks span {
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+  }
+  .fuse-marks button[aria-checked="true"] span { color: var(--text); font-weight: 700; }
+  .fuse-where {
+    text-align: center; margin-top: 11px;
+    font-size: 11.5px; color: var(--faint);
+  }
+  .fuse-where b { color: var(--muted); font-weight: 600; }
+
+  /* -------------------------------------------------------------- alias row */
+
+  .alias {
+    display: flex; align-items: center;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .alias:focus-within { border-color: var(--focus); }
+  .alias b {
+    font-family: var(--mono); font-size: 13px; font-weight: 400;
+    color: var(--faint); padding: 9px 0 9px 12px; white-space: nowrap;
+  }
+  .alias input {
+    flex: 1; background: none; border: 0; padding: 9px 12px 9px 1px;
+    font-family: var(--mono); font-size: 13px;
+  }
+  .alias input:focus { outline: none; }
+
+  /* ----------------------------------------------------------------- action */
+
+  .go {
+    width: 100%; padding: 12px; border: 0; cursor: pointer;
+    border-radius: var(--radius);
+    background: var(--ember); color: #fff;
+    font-size: 14px; font-weight: 650; letter-spacing: 0.01em;
+  }
+  .go:hover:not(:disabled) { filter: brightness(1.08); }
+  .go:disabled { opacity: .45; cursor: not-allowed; }
+
+  .note { font-size: 12px; color: var(--muted); margin-top: 9px; text-align: center; }
+  .bad { color: var(--alarm); }
+
+  /* --------------------------------------------------------------- progress */
+
+  .working { text-align: center; padding: 26px 0; }
+  .working .name { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  .meter {
+    height: 3px; background: var(--raised); border-radius: 3px;
+    margin: 16px 0 9px; overflow: hidden;
+  }
+  .meter i { display: block; height: 100%; background: var(--ember); width: 0; transition: width .2s; }
+  .meter.idle i { width: 35%; animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+  .counts { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+  /* ----------------------------------------------------------------- result */
+
+  .result {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--mint);
+    border-radius: var(--radius); padding: 18px;
+  }
+  .result .link {
+    font-family: var(--mono); font-size: 19px; font-weight: 600;
+    word-break: break-all; margin-bottom: 14px; display: block;
+    color: var(--text); text-decoration: none;
+  }
+  .result .link:hover { color: var(--ember); }
+  .burn { height: 2px; background: var(--raised); border-radius: 2px; overflow: hidden; }
+  .burn i { display: block; height: 100%; background: var(--ember); transition: width 1s linear; }
+  .left { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 7px; }
+  .row { display: flex; gap: 8px; margin-top: 16px; }
+  .row button {
+    flex: 1; padding: 9px; cursor: pointer;
+    background: var(--raised); border: 1px solid transparent;
+    border-radius: 6px; font-size: 13px; font-weight: 550;
+  }
+  .row button:hover { border-color: var(--line); }
+  .meta { font-size: 12px; color: var(--faint); margin-top: 14px; word-break: break-all; }
+
+  /* ---------------------------------------------------------------- history */
+
+  .history { margin-top: 26px; border-top: 1px solid var(--line); padding-top: 18px; }
+  .entry {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 7px 0; border-bottom: 1px solid var(--line);
+  }
+  .entry:last-child { border-bottom: 0; }
+  .entry code {
+    font-family: var(--mono); font-size: 12.5px; cursor: pointer;
+    color: var(--text); text-decoration: underline; text-decoration-color: var(--line);
+  }
+  .entry code:hover { color: var(--ember); }
+  .entry .who { flex: 1; font-size: 12px; color: var(--faint); text-align: right; word-break: break-all; }
+  .entry.gone code { color: var(--faint); text-decoration-line: line-through; cursor: default; }
+  .empty { font-size: 12.5px; color: var(--faint); }
+
+  .hide { display: none !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div class="wordmark">File<span>·</span>Uploader</div>
+  <button class="ghost" id="revealBtn" title="Open the folder holding saved text files">Saved text</button>
+</div>
+
+<main>
+  <!-- form ------------------------------------------------------------- -->
+  <section id="form">
+    <div class="modes" role="tablist">
+      <button role="tab" id="tabFile" aria-selected="true">File</button>
+      <button role="tab" id="tabText" aria-selected="false">Text</button>
+    </div>
+
+    <div class="stack" id="paneFile">
+      <div class="well" id="well" tabindex="0" role="button">
+        <strong id="wellTitle">Choose a file</strong>
+        <em id="wellHint">or drop one here</em>
+      </div>
+      <input type="file" id="fileInput" class="hide">
+    </div>
+
+    <div class="stack hide" id="paneText">
+      <textarea id="textBody" placeholder="Paste your text here."></textarea>
+      <div style="height:10px"></div>
+      <div class="label">Save it as</div>
+      <input class="field" id="textName" placeholder="notes" spellcheck="false">
+    </div>
+
+    <div class="stack">
+      <div class="label">Vanishes after</div>
+      <div class="fuse">
+        <div class="fuse-track"><div class="fuse-lit" id="fuseLit"></div></div>
+        <div class="fuse-marks" id="fuse" role="radiogroup" aria-label="Vanishes after"></div>
+        <div class="fuse-where" id="fuseWhere"></div>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="label">Custom link — optional</div>
+      <div class="alias">
+        <b>ulvis.net/</b><input id="alias" placeholder="leave blank for a random one" spellcheck="false"
+               autocapitalize="off" autocorrect="off">
+      </div>
+      <div class="note bad hide" id="aliasNote"></div>
+    </div>
+
+    <button class="go" id="go" disabled>Get link</button>
+    <div class="note hide bad" id="formError"></div>
+  </section>
+
+  <!-- working ---------------------------------------------------------- -->
+  <section id="working" class="working hide">
+    <div class="name" id="workName"></div>
+    <div class="meter" id="meter"><i id="meterBar"></i></div>
+    <div class="counts" id="workCounts"></div>
+  </section>
+
+  <!-- result ----------------------------------------------------------- -->
+  <section id="result" class="hide">
+    <div class="result">
+      <a class="link" id="resultLink" href="#"></a>
+      <div class="burn"><i id="burnBar"></i></div>
+      <div class="left" id="resultLeft"></div>
+      <div class="row">
+        <button id="copyBtn">Copy</button>
+        <button id="openBtn">Open</button>
+        <button id="againBtn">Share another</button>
+      </div>
+      <div class="meta" id="resultMeta"></div>
+    </div>
+  </section>
+
+  <!-- alias rejected --------------------------------------------------- -->
+  <section id="retry" class="hide">
+    <div class="result" style="border-left-color: var(--alarm)">
+      <div style="font-weight:600;margin-bottom:4px" id="retryWhy"></div>
+      <div class="note" style="text-align:left;margin:0 0 12px">
+        The file is already uploaded — a different link costs nothing.
+      </div>
+      <div class="alias"><b>ulvis.net/</b><input id="retryAlias" spellcheck="false" autocapitalize="off"></div>
+      <div class="row">
+        <button id="retryBtn">Use this link</button>
+        <button id="randomBtn">Give me a random one</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- history ---------------------------------------------------------- -->
+  <div class="history">
+    <div class="label">Recent</div>
+    <div id="historyList"><div class="empty">Links you make will be listed here.</div></div>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const native = () => typeof window.pywebview !== "undefined" && window.pywebview.api;
+
+let CONFIG = { lifetimes: [], default: "3d" };
+let mode = "file";
+let picked = null;          // {path, name, size} from the native picker
+let pickedBlob = null;      // File object, when the file was dropped
+let lifetime = "3d";
+let poller = null;
+let ticker = null;
+
+// ------------------------------------------------------------------ helpers
+
+function size(bytes) {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let n = bytes, i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n.toFixed(0) : n.toFixed(1)) + " " + units[i];
+}
+
+function show(section) {
+  for (const id of ["form", "working", "result", "retry"]) {
+    $(id).classList.toggle("hide", id !== section);
+  }
+}
+
+async function api(path, body, isForm) {
+  const options = { method: body === undefined ? "GET" : "POST" };
+  if (body !== undefined) {
+    if (isForm) { options.body = body; }
+    else { options.headers = { "Content-Type": "application/json" }; options.body = JSON.stringify(body); }
+  }
+  const response = await fetch(path, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || ("Request failed (" + response.status + ")"));
+  return data;
+}
+
+// --------------------------------------------------------------- the fuse
+
+function current() {
+  return CONFIG.lifetimes.find((entry) => entry.id === lifetime) || CONFIG.lifetimes[0];
+}
+
+function buildFuse() {
+  const holder = $("fuse");
+  holder.innerHTML = "";
+  holder.style.gridTemplateColumns = "repeat(" + CONFIG.lifetimes.length + ", 1fr)";
+  CONFIG.lifetimes.forEach((entry) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.setAttribute("role", "radio");
+    button.innerHTML = '<div class="notch"></div><span>' + entry.label + "</span>";
+    button.onclick = () => setLifetime(entry.id);
+    holder.appendChild(button);
+  });
+  setLifetime(CONFIG.default);
+}
+
+function setLifetime(value) {
+  lifetime = value;
+  const index = CONFIG.lifetimes.findIndex((entry) => entry.id === value);
+  [...$("fuse").children].forEach((button, i) =>
+    button.setAttribute("aria-checked", String(i === index)));
+  // The lit part of the track runs to the chosen notch, so longer reads as further.
+  const step = 100 / CONFIG.lifetimes.length;
+  $("fuseLit").style.width = (step * index + step / 2) + "%";
+
+  const entry = current();
+  if (entry) {
+    $("fuseWhere").innerHTML = "up to <b>" + entry.max_label + "</b> · stored on <b>"
+      + entry.origin + "</b>" + (entry.direct ? "" : " · link opens a download page");
+  }
+  warnIfTooBig();
+}
+
+function warnIfTooBig() {
+  const entry = current();
+  const bytes = picked ? picked.size : (pickedBlob ? pickedBlob.size : 0);
+  if (!entry || !bytes) { $("formError").classList.add("hide"); return; }
+  if (bytes > entry.max_bytes) {
+    const roomier = CONFIG.lifetimes.find((e) => e.max_bytes >= bytes);
+    fail(size(bytes) + " is too big for a " + entry.label + " link (max " + entry.max_label + ")."
+      + (roomier ? " Choose " + roomier.label + " instead." : ""));
+  } else {
+    $("formError").classList.add("hide");
+  }
+}
+
+// ------------------------------------------------------------------- modes
+
+function setMode(next) {
+  mode = next;
+  $("tabFile").setAttribute("aria-selected", String(next === "file"));
+  $("tabText").setAttribute("aria-selected", String(next === "text"));
+  $("paneFile").classList.toggle("hide", next !== "file");
+  $("paneText").classList.toggle("hide", next !== "text");
+  if (next === "text") $("formError").classList.add("hide"); else warnIfTooBig();
+  refreshGo();
+}
+
+function refreshGo() {
+  const entry = current();
+  const bytes = picked ? picked.size : (pickedBlob ? pickedBlob.size : 0);
+  const fits = !entry || !bytes || bytes <= entry.max_bytes;
+  const ready = mode === "file"
+    ? Boolean(picked || pickedBlob) && fits
+    : $("textBody").value.trim().length > 0;
+  $("go").disabled = !ready;
+}
+
+function showPicked(name, bytes) {
+  $("well").classList.add("loaded");
+  $("wellTitle").textContent = name;
+  $("wellHint").textContent = size(bytes) + " · click to change";
+  warnIfTooBig();
+  refreshGo();
+}
+
+// ------------------------------------------------------------------ picking
+
+async function pick() {
+  if (native()) {
+    const result = await window.pywebview.api.pick_file();
+    if (!result.ok) {
+      if (!result.cancelled) fail(result.error || "Could not open the file picker.");
+      return;
+    }
+    picked = result; pickedBlob = null;
+    showPicked(result.name, result.size);
+  } else {
+    $("fileInput").click();
+  }
+}
+
+$("fileInput").onchange = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  pickedBlob = file; picked = null;
+  showPicked(file.name, file.size);
+};
+
+function acceptDrop(file) {
+  pickedBlob = file; picked = null;
+  setMode("file");
+  showPicked(file.name, file.size);
+}
+
+// ------------------------------------------------------------------ sending
+
+function fail(message) {
+  const box = $("formError");
+  box.textContent = message;
+  box.classList.remove("hide");
+}
+
+async function send() {
+  $("formError").classList.add("hide");
+  const alias = $("alias").value.trim();
+  $("go").disabled = true;
+
+  try {
+    if (mode === "text") {
+      await api("/api/share-text", {
+        text: $("textBody").value,
+        filename: $("textName").value,
+        alias: alias,
+        lifetime: lifetime,
+      });
+    } else if (picked) {
+      await api("/api/share", { path: picked.path, alias: alias, lifetime: lifetime });
+    } else if (pickedBlob) {
+      const form = new FormData();
+      form.append("file", pickedBlob);
+      form.append("alias", alias);
+      form.append("lifetime", lifetime);
+      await api("/api/share-upload", form, true);
+    } else {
+      throw new Error("Pick a file first.");
+    }
+  } catch (error) {
+    fail(error.message);
+    $("go").disabled = false;
+    return;
+  }
+
+  show("working");
+  startPolling();
+}
+
+// ----------------------------------------------------------------- watching
+
+function startPolling() {
+  stopPolling();
+  poller = setInterval(tick, 250);
+  tick();
+}
+function stopPolling() { if (poller) { clearInterval(poller); poller = null; } }
+
+async function tick() {
+  let job;
+  try { job = await api("/api/status"); } catch { return; }
+
+  if (job.state === "uploading" || job.state === "shortening") {
+    show("working");
+    $("workName").textContent = job.name;
+    const bar = $("meter");
+    if (job.state === "shortening") {
+      $("meterBar").style.width = "100%";
+      bar.classList.remove("idle");
+      $("workCounts").textContent = "Making the link…";
+    } else {
+      bar.classList.toggle("idle", job.total === 0);
+      $("meterBar").style.width = job.percent + "%";
+      $("workCounts").textContent = job.sent_text + " of " + job.total_text + " · " + job.percent + "%";
+    }
+    return;
+  }
+
+  stopPolling();
+
+  if (job.state === "error" && job.alias_rejected) {
+    $("retryWhy").textContent = job.error;
+    $("retryAlias").value = "";
+    show("retry");
+    $("retryAlias").focus();
+    return;
+  }
+  if (job.state === "error") {
+    show("form");
+    fail(job.error);
+    $("go").disabled = false;
+    return;
+  }
+  if (job.state === "done") {
+    showResult(job);
+    loadHistory();
+  }
+}
+
+// ------------------------------------------------------------------ result
+
+function showResult(job) {
+  show("result");
+  $("resultLink").textContent = job.link;
+  $("resultLink").href = job.link;
+  $("resultMeta").textContent = job.name + " · " + job.total_text + " · on " + job.origin
+    + (job.error ? " · " + job.error : "");
+
+  const hours = job.hours || 72;
+  const deadline = Date.now() + hours * 3600 * 1000;
+  clearInterval(ticker);
+  const burn = () => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      $("resultLeft").textContent = "expired";
+      $("burnBar").style.width = "0%";
+      clearInterval(ticker);
+      return;
+    }
+    $("burnBar").style.width = (remaining / (hours * 3600 * 1000) * 100) + "%";
+    const h = Math.floor(remaining / 3600000);
+    const m = Math.floor(remaining / 60000) % 60;
+    const s = Math.floor(remaining / 1000) % 60;
+    $("resultLeft").textContent = h + "h " + String(m).padStart(2, "0") + "m "
+      + String(s).padStart(2, "0") + "s left";
+  };
+  burn();
+  ticker = setInterval(burn, 1000);
+}
+
+async function copy(text, button) {
+  let done = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    done = true;
+  } catch {
+    if (native()) {
+      const result = await window.pywebview.api.copy(text);
+      done = result.ok;
+    }
+  }
+  if (button) {
+    const was = button.textContent;
+    button.textContent = done ? "Copied" : "Copy failed";
+    setTimeout(() => { button.textContent = was; }, 1400);
+  }
+}
+
+function openOut(url) {
+  if (native()) window.pywebview.api.open_external(url);
+  else window.open(url, "_blank");
+}
+
+// ----------------------------------------------------------------- history
+
+async function loadHistory() {
+  let entries = [];
+  try { entries = (await api("/api/history")).entries; } catch { return; }
+
+  const list = $("historyList");
+  if (!entries.length) {
+    list.innerHTML = '<div class="empty">Links you make will be listed here.</div>';
+    return;
+  }
+  list.innerHTML = "";
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "entry" + (entry.expired ? " gone" : "");
+    const code = document.createElement("code");
+    code.textContent = entry.link.replace(/^https?:\/\//, "");
+    if (!entry.expired) {
+      code.title = "Copy";
+      code.onclick = () => copy(entry.link, null);
+    }
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = entry.name;
+    row.append(code, who);
+    list.appendChild(row);
+  }
+}
+
+// -------------------------------------------------------------------- wiring
+
+$("tabFile").onclick = () => setMode("file");
+$("tabText").onclick = () => setMode("text");
+$("well").onclick = pick;
+$("well").onkeydown = (event) => {
+  if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pick(); }
+};
+$("textBody").oninput = refreshGo;
+$("go").onclick = send;
+
+$("alias").oninput = () => {
+  const value = $("alias").value.trim();
+  const bad = value && !/^[A-Za-z0-9]{5,30}$/.test(value);
+  $("aliasNote").textContent = bad
+    ? "5–30 letters and numbers. Nothing else — ulvis.net silently drops it."
+    : "";
+  $("aliasNote").classList.toggle("hide", !bad);
+};
+
+$("copyBtn").onclick = (event) => copy($("resultLink").textContent, event.target);
+$("openBtn").onclick = () => openOut($("resultLink").href);
+$("resultLink").onclick = (event) => { event.preventDefault(); openOut($("resultLink").href); };
+$("againBtn").onclick = async () => {
+  await api("/api/reset", {});
+  picked = null; pickedBlob = null;
+  $("well").classList.remove("loaded");
+  $("wellTitle").textContent = "Choose a file";
+  $("wellHint").textContent = "or drop one here";
+  $("alias").value = ""; $("textBody").value = ""; $("textName").value = "";
+  $("aliasNote").classList.add("hide");
+  clearInterval(ticker);
+  refreshGo();
+  show("form");
+};
+
+async function retryWith(alias) {
+  try { await api("/api/retry-alias", { alias: alias }); }
+  catch (error) { $("retryWhy").textContent = error.message; return; }
+  show("working");
+  startPolling();
+}
+$("retryBtn").onclick = () => retryWith($("retryAlias").value.trim());
+$("randomBtn").onclick = () => retryWith("");
+$("revealBtn").onclick = () => {
+  if (native()) window.pywebview.api.reveal_texts();
+};
+
+// Dropping a file always goes through the browser upload path: a webview hands
+// over a File object, never a path, so there is nothing to give /api/share.
+for (const event of ["dragenter", "dragover"]) {
+  document.addEventListener(event, (e) => {
+    e.preventDefault();
+    $("well").classList.add("hot");
+  });
+}
+document.addEventListener("dragleave", () => $("well").classList.remove("hot"));
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  $("well").classList.remove("hot");
+  const file = e.dataTransfer && e.dataTransfer.files[0];
+  if (file) acceptDrop(file);
+});
+
+// -------------------------------------------------------------------- start
+
+(async function boot() {
+  try { CONFIG = await api("/api/config"); } catch { /* defaults are fine */ }
+  buildFuse();
+  if (!native()) $("revealBtn").classList.add("hide");
+  loadHistory();
+  // A share may already be running if the window was reopened mid-upload.
+  try {
+    const job = await api("/api/status");
+    if (job.state !== "idle") { startPolling(); return; }
+  } catch { /* ignore */ }
+  show("form");
+})();
+</script>
+</body>
+</html>
