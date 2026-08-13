@@ -26,8 +26,28 @@ permanent copy. Pick a file, get a short link, send it. The link dies on its own
 
 ## Download
 
-Grab the executable from the [latest release](https://github.com/Abdullah-Handal/FileUploader/releases/latest)
-— one file, ~48 MB, no Python or dependencies needed.
+From the [latest release](https://github.com/Abdullah-Handal/FileUploader/releases/latest).
+One file either way, with Python and everything else already inside it.
+
+| | File | Size |
+|---|---|---|
+| Windows 10/11, 64-bit | `fileuploader.exe` | 18 MB |
+| Linux, 64-bit | `fileuploader` | 48 MB |
+
+### Windows
+
+Download `fileuploader.exe` and double-click it. That is the whole install.
+
+The first launch shows **"Windows protected your PC"** — the blue SmartScreen
+box. That is not a virus warning; it is Windows saying the file has no code
+signing certificate, which costs a few hundred a year. Click **More info**, then
+**Run anyway**. Windows remembers, and asks once.
+
+Nothing else to install: the window is drawn by WebView2, which ships with
+Windows 11 and reached Windows 10 through Edge updates. On the rare machine
+without it, the app opens in your browser instead of its own window.
+
+### Linux
 
 ```bash
 gh release download --repo Abdullah-Handal/FileUploader --pattern fileuploader
@@ -35,11 +55,12 @@ chmod +x fileuploader
 ./fileuploader
 ```
 
-This repository is **private**, so the download needs your GitHub login. The
-`gh` command above uses it automatically; downloading in a browser works too as
-long as you are signed in. A plain `wget` of the asset URL will not work.
+This repository is **private**, so downloading needs your GitHub login. The `gh`
+command uses it automatically, and a browser works while you are signed in — but
+a plain `wget` of the asset URL will not.
 
-One dependency is not in the file, because every Linux desktop already has it:
+One dependency is not inside the file, because every Linux desktop already has
+it:
 
 ```bash
 sudo apt install python3-gi gir1.2-webkit2-4.1
@@ -79,6 +100,12 @@ starts. Add `--browser` to open in your browser instead of a native window.
 ./install.sh            # add it to your applications menu
 ```
 
+On Windows, `build.bat` does the same thing. You will rarely need it: pushing a
+`v*` tag builds the `.exe` on a GitHub Actions runner and attaches it to the
+release, and the Actions tab can run that build on demand. PyInstaller cannot
+cross-compile, so a Windows executable has to be built on Windows — the runner
+is there so you do not need a Windows machine of your own.
+
 The build bundles Python, the server and the interface. It does **not** bundle
 GTK's icon and theme artwork — over 29,000 files that GTK reads from the system
 anyway, and which would otherwise triple the size.
@@ -94,10 +121,10 @@ uses that one.
 
 ## Where things go
 
-| What | Where |
-|---|---|
-| Text snippets you shared | `~/.local/share/fileuploader/texts/` |
-| Recent links | `~/.local/share/fileuploader/history.json` |
+| What | Linux | Windows |
+|---|---|---|
+| Text snippets you shared | `~/.local/share/fileuploader/texts/` | `%LOCALAPPDATA%\fileuploader\texts\` |
+| Recent links | `~/.local/share/fileuploader/history.json` | `%LOCALAPPDATA%\fileuploader\history.json` |
 
 Files you pick are **never copied** — only read and uploaded. Dropped files are
 copied to a temporary directory and deleted afterwards, because a webview hands
@@ -148,6 +175,8 @@ desktop.py        opens a native window over the local server
   app/uploader.py   runs one share on a background thread
   app/paths.py      where things live, in source and once frozen
   web/index.html    the whole interface, one file
+
+.github/workflows/windows.yml   builds the .exe on a Windows runner
 ```
 
 The server binds a random loopback port and the webview points at it. Uploads
