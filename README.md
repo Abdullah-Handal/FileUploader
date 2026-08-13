@@ -24,6 +24,33 @@ permanent copy. Pick a file, get a short link, send it. The link dies on its own
 └────────────────────────────────────────┘
 ```
 
+## Download
+
+Grab the executable from the [latest release](https://github.com/Abdullah-Handal/FileUploader/releases/latest)
+— one file, ~48 MB, no Python or dependencies needed.
+
+```bash
+gh release download --repo Abdullah-Handal/FileUploader --pattern fileuploader
+chmod +x fileuploader
+./fileuploader
+```
+
+This repository is **private**, so the download needs your GitHub login. The
+`gh` command above uses it automatically; downloading in a browser works too as
+long as you are signed in. A plain `wget` of the asset URL will not work.
+
+One dependency is not in the file, because every Linux desktop already has it:
+
+```bash
+sudo apt install python3-gi gir1.2-webkit2-4.1
+```
+
+That is WebKit, which draws the window. Without it the app still works — it
+opens in your browser instead.
+
+To put it in your applications menu, drop the file in this repo's folder as
+`dist/fileuploader` and run `./install.sh`.
+
 ## What it does
 
 - **Share a file.** Native file picker, or drop a file onto the window.
@@ -33,7 +60,9 @@ permanent copy. Pick a file, get a short link, send it. The link dies on its own
   only thing you actually care about.
 - **Name your own link.** Optional. Blank gives you a random one.
 
-## Running it
+## Building it yourself
+
+### Running from source
 
 ```bash
 ./run.sh
@@ -42,7 +71,7 @@ permanent copy. Pick a file, get a short link, send it. The link dies on its own
 First run creates the virtualenv and installs dependencies; after that it just
 starts. Add `--browser` to open in your browser instead of a native window.
 
-## Building the executable
+### Making the executable
 
 ```bash
 ./build.sh              # one self-contained file -> dist/fileuploader  (~48 MB)
@@ -54,15 +83,9 @@ The build bundles Python, the server and the interface. It does **not** bundle
 GTK's icon and theme artwork — over 29,000 files that GTK reads from the system
 anyway, and which would otherwise triple the size.
 
-## Requirements
+### Requirements
 
-Python 3.11+, and WebKit2GTK for the native window:
-
-```bash
-sudo apt install python3-gi gir1.2-webkit2-4.1
-```
-
-Without it the app still runs; it opens in your browser instead.
+Python 3.11+, plus the WebKit packages from the Download section above.
 
 PyGObject is deliberately not in `requirements.txt`. Building it from source
 needs cairo and girepository development headers, and every Linux desktop ships
