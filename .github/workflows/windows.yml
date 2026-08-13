@@ -1,0 +1,81 @@
+# Builds the Windows executable.
+#
+# PyInstaller cannot cross-compile, so the only way to produce a .exe from a
+# Linux machine is to build it on a Windows one. This is that machine.
+#
+# Push a v* tag and the executable is attached to that release. Or run it by
+# hand from the Actions tab to get a downloadable artifact without tagging.
+
+name: Windows build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Not the newest: pythonnet, which pywebview needs to reach the
+          # Windows webview, publishes wheels a version or two behind. Building
+          # it from source on a runner needs a .NET SDK and is not worth it.
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Build
+        env:
+          FILEUPLOADER_ONEFILE: "1"
+        run: pyinstaller --noconfirm --clean fileuploader.spec
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          # The build is windowed, so it prints nowhere a runner can read.
+          # Whether it serves the interface is the thing worth checking.
+          $exe = "dist\fileuploader.exe"
+          if (-not (Test-Path $exe)) { throw "No executable was produced." }
+
+          $proc = Start-Process -PassThru -FilePath $exe -ArgumentList '--serve','--port','8899'
+          try {
+            $ok = $false
+            foreach ($attempt in 1..60) {
+              try {
+                $page = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8899/ -TimeoutSec 5
+                if ($page.StatusCode -eq 200) { $ok = $true; break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ok) { throw "The executable never served the interface." }
+
+            $config = Invoke-RestMethod http://127.0.0.1:8899/api/config
+            $labels = ($config.lifetimes | ForEach-Object { $_.label }) -join ', '
+            if ($config.lifetimes.Count -lt 1) { throw "No upload hosts were configured." }
+
+            $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+            Write-Host "OK - serves the interface, lifetimes: $labels, ${size} MB"
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fileuploader-windows
+          path: dist/fileuploader.exe
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: gh release upload ${{ github.ref_name }} dist/fileuploader.exe --clobber

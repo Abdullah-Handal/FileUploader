@@ -29,6 +29,13 @@ from server.main import app as fastapi_app  # noqa: E402
 
 log = logging.getLogger("fileuploader")
 
+IS_WINDOWS = sys.platform == "win32"
+
+# Spawning a helper from a windowed build pops a console window for as long as
+# the helper lives. On Windows that is a black rectangle flashing over the app;
+# this flag suppresses it, and is meaningless elsewhere.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
+
 WINDOW_TITLE = "FileUploader"
 WINDOW_SIZE = (720, 760)
 MIN_SIZE = (520, 560)
@@ -129,20 +136,37 @@ class Api:
         The page tries navigator.clipboard first; this is the fallback for
         webview backends where that is unavailable.
         """
-        for command in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "-ib"]):
+        if IS_WINDOWS:
+            commands = [["clip"]]
+            missing = "clip.exe is missing from PATH."
+        else:
+            commands = [["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "-ib"]]
+            missing = "No clipboard tool found (install wl-clipboard or xclip)."
+
+        # UTF-8 rather than the console codepage: what gets copied is a short
+        # ASCII link, for which the two are identical, and guessing the codepage
+        # wrongly would corrupt the one thing this method exists to hand over.
+        payload = text.encode("utf-8", "replace")
+        for command in commands:
             try:
-                subprocess.run(command, input=text.encode(), check=True, timeout=5)
+                subprocess.run(
+                    command, input=payload, check=True, timeout=5, creationflags=_NO_WINDOW
+                )
                 return {"ok": True}
             except (OSError, subprocess.SubprocessError):
                 continue
-        return {"ok": False, "error": "No clipboard tool found (install wl-clipboard or xclip)."}
+        return {"ok": False, "error": missing}
 
     def reveal_texts(self) -> dict:
         """Open the saved-text folder in the system file manager."""
         folder = paths.texts_dir()
         folder.mkdir(parents=True, exist_ok=True)
         try:
-            subprocess.Popen(["xdg-open", str(folder)])
+            if IS_WINDOWS:
+                # Hands the folder to Explorer without spawning a shell.
+                os.startfile(folder)  # noqa: S606 - a directory this app owns
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
         except OSError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}

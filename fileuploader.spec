@@ -6,17 +6,22 @@
 """
 
 import os
+import sys
 
 from PyInstaller.utils.hooks import collect_submodules
 
 ONEFILE = os.environ.get("FILEUPLOADER_ONEFILE") == "1"
+IS_WINDOWS = sys.platform == "win32"
 
 datas = [("web", "web")]
 
-hiddenimports = collect_submodules("uvicorn") + [
-    # pywebview picks its backend at runtime, so static analysis never sees this.
-    "webview.platforms.gtk",
-]
+# pywebview picks its backend at runtime, so static analysis never sees the one
+# that actually gets imported. Only the host platform's backend is named: the
+# other one's dependencies are not installed here and would fail the build.
+# pywebview ships its own hook for the rest -- on Windows that pulls in the
+# WebView2 interop assemblies it needs to draw anything at all.
+backend = "webview.platforms.winforms" if IS_WINDOWS else "webview.platforms.gtk"
+hiddenimports = collect_submodules("uvicorn") + [backend]
 
 a = Analysis(
     ["desktop.py"],
@@ -53,9 +58,10 @@ def _wanted(entry):
     return not dest.startswith(_DROP_PREFIXES)
 
 
-_before = len(a.datas)
-a.datas = [entry for entry in a.datas if _wanted(entry)]
-print(f"[fileuploader] dropped {_before - len(a.datas)} theme/icon data files")
+if not IS_WINDOWS:
+    _before = len(a.datas)
+    a.datas = [entry for entry in a.datas if _wanted(entry)]
+    print(f"[fileuploader] dropped {_before - len(a.datas)} theme/icon data files")
 
 pyz = PYZ(a.pure)
 
