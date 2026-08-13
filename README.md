@@ -24,53 +24,65 @@ permanent copy. Pick a file, get a short link, send it. The link dies on its own
 └────────────────────────────────────────┘
 ```
 
-## Download
+## Install
 
-From the [latest release](https://github.com/Abdullah-Handal/FileUploader/releases/latest).
-One file either way, with Python and everything else already inside it.
+One file, whichever system you are on. Python and everything else is already
+inside it — there is nothing to install alongside it.
 
-| | File | Size |
+| System | File | Size |
 |---|---|---|
-| Windows 10/11, 64-bit | `fileuploader.exe` | 18 MB |
-| Linux, 64-bit | `fileuploader` | 48 MB |
+| Windows 10 / 11, 64-bit | [`fileuploader.exe`](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader.exe) | 18 MB |
+| Linux, 64-bit | [`fileuploader`](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader) | 48 MB |
 
 ### Windows
 
-Download `fileuploader.exe` and double-click it. That is the whole install.
+Download **[fileuploader.exe](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader.exe)**
+and double-click it. That is the whole install.
 
-The first launch shows **"Windows protected your PC"** — the blue SmartScreen
-box. That is not a virus warning; it is Windows saying the file has no code
-signing certificate, which costs a few hundred a year. Click **More info**, then
-**Run anyway**. Windows remembers, and asks once.
+The first launch shows **"Windows protected your PC"** — the blue box. It is not
+a virus warning: it means the file has no code-signing certificate, which costs
+a few hundred a year. Click **More info**, then **Run anyway**. Windows asks
+once and remembers.
 
-Nothing else to install: the window is drawn by WebView2, which ships with
-Windows 11 and reached Windows 10 through Edge updates. On the rare machine
-without it, the app opens in your browser instead of its own window.
+To keep it: move the `.exe` somewhere permanent — `Documents\Apps` is fine —
+then right-click it and choose **Pin to Start**.
+
+Or from PowerShell:
+
+```powershell
+curl.exe -L -o fileuploader.exe https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader.exe
+.\fileuploader.exe
+```
+
+Nothing else is needed. The window is drawn by WebView2, which ships with
+Windows 11 and reached Windows 10 through Edge updates. On a machine without it,
+the app opens in your browser instead of its own window.
 
 ### Linux
 
 ```bash
-gh release download --repo Abdullah-Handal/FileUploader --pattern fileuploader
+curl -L -o fileuploader https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader
 chmod +x fileuploader
 ./fileuploader
 ```
 
-This repository is **private**, so downloading needs your GitHub login. The `gh`
-command uses it automatically, and a browser works while you are signed in — but
-a plain `wget` of the asset URL will not.
-
-One dependency is not inside the file, because every Linux desktop already has
-it:
+To add it to your applications menu:
 
 ```bash
-sudo apt install python3-gi gir1.2-webkit2-4.1
+curl -L -o install.sh https://github.com/Abdullah-Handal/FileUploader/raw/master/install.sh
+bash install.sh ./fileuploader
+```
+
+One thing is not inside the file, because every Linux desktop already has it:
+
+```bash
+sudo apt install python3-gi gir1.2-webkit2-4.1     # Debian, Ubuntu, Mint
+sudo dnf install python3-gobject webkit2gtk4.1     # Fedora
+sudo pacman -S python-gobject webkit2gtk-4.1       # Arch
 ```
 
 That is WebKit, which draws the window. Without it the app still works — it
 opens in your browser instead.
-
-To put it in your applications menu, drop the file in this repo's folder as
-`dist/fileuploader` and run `./install.sh`.
 
 ## What it does
 
@@ -99,6 +111,9 @@ starts. Add `--browser` to open in your browser instead of a native window.
 ./build.sh --folder     # a folder that starts faster -> dist/fileuploader/
 ./install.sh            # add it to your applications menu
 ```
+
+`install.sh` also takes a path, so it works on a downloaded executable that was
+never built here: `./install.sh ~/Downloads/fileuploader`.
 
 On Windows, `build.bat` does the same thing. You will rarely need it: pushing a
 `v*` tag builds the `.exe` on a GitHub Actions runner and attaches it to the

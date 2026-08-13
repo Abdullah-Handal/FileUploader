@@ -1,18 +1,28 @@
 #!/usr/bin/env bash
 #
-# Put FileUploader in the applications menu, pointing at the built executable.
-# Run ./build.sh first.
+# Put FileUploader in the applications menu.
+#
+#   ./install.sh                    use the executable from ./build.sh
+#   ./install.sh ~/Downloads/fileuploader   use one downloaded from Releases
 
 set -Eeuo pipefail
-cd "$(dirname "$(readlink -f "$0")")"
+HERE="$(dirname "$(readlink -f "$0")")"
 
 green=$'\e[32m'; red=$'\e[31m'; off=$'\e[0m'
 die() { printf '%s\n' "${red}✗${off} $*" >&2; exit 1; }
 
-if   [ -x "dist/fileuploader" ];              then TARGET="$PWD/dist/fileuploader"
-elif [ -x "dist/fileuploader/fileuploader" ]; then TARGET="$PWD/dist/fileuploader/fileuploader"
-else die "No build found. Run ./build.sh first."
+if [ $# -gt 0 ]; then
+  [ -f "$1" ] || die "No such file: $1"
+  TARGET="$(readlink -f "$1")"
+  # A browser download arrives without the executable bit.
+  [ -x "$TARGET" ] || chmod +x "$TARGET"
+elif [ -x "$HERE/dist/fileuploader" ];              then TARGET="$HERE/dist/fileuploader"
+elif [ -x "$HERE/dist/fileuploader/fileuploader" ]; then TARGET="$HERE/dist/fileuploader/fileuploader"
+elif [ -x "$HERE/fileuploader" ];                   then TARGET="$HERE/fileuploader"
+else die "No executable found. Run ./build.sh, or pass the path to a downloaded one."
 fi
+
+cd "$HERE"
 
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$APPS"
@@ -24,7 +34,7 @@ Name=FileUploader
 GenericName=Temporary File Sharing
 Comment=Share a file or some text as a short link that expires
 Exec=$TARGET
-Path=$PWD
+Path=$(dirname "$TARGET")
 Icon=document-send
 Terminal=false
 Categories=Utility;FileTransfer;
