@@ -31,7 +31,7 @@ alongside it.
 
 | System | File | Size |
 |---|---|---|
-| Windows 10 / 11, 64-bit | [`FileUploader-windows.zip`](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/FileUploader-windows.zip) | 22 MB |
+| Windows 10 / 11, 64-bit | [`FileUploader-windows.zip`](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/FileUploader-windows.zip) | 18 MB |
 | Linux, 64-bit | [`fileuploader`](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader) | 48 MB |
 
 ### Windows
@@ -47,9 +47,13 @@ and it will fall back to your browser.
 The folder holds two programs, and only the first is yours to click:
 
 ```
-fileuploader.exe              <- this one
-window\FileUploaderWindow.exe  <- started by it; the window itself
+fileuploader.exe               <- this one          15 MB
+window\FileUploaderWindow.exe   <- started by it     9 MB
 ```
+
+`fileuploader.exe` is the server and everything that uploads. The one beside it
+is the window, and nothing else — it is started for you and closes with the app.
+24 MB once extracted.
 
 The first launch shows **"Windows protected your PC"** — the blue box. It is not
 a virus warning: it means the file has no code-signing certificate, which costs
