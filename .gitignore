@@ -5,3 +5,10 @@ dist/
 __pycache__/
 *.pyc
 *.pyo
+
+# Pake/Tauri build output
+staging/
+window/
+pake-result.json
+*.msi
+*-setup.exe

@@ -16,4 +16,7 @@ python-multipart==0.0.20
 #
 # If `import gi` fails, install it from your package manager:
 #   sudo apt install python3-gi gir1.2-webkit2-4.1
-pywebview==6.2.1
+# Windows is not listed: that build draws its window with the Pake shell
+# (pake.json) instead, so it needs neither pywebview nor the pythonnet bridge
+# underneath it -- which is the pair that left the window blank.
+pywebview==6.2.1; sys_platform != "win32"

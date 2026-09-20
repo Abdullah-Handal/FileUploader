@@ -16,12 +16,19 @@ IS_WINDOWS = sys.platform == "win32"
 datas = [("web", "web")]
 
 # pywebview picks its backend at runtime, so static analysis never sees the one
-# that actually gets imported. Only the host platform's backend is named: the
-# other one's dependencies are not installed here and would fail the build.
-# pywebview ships its own hook for the rest -- on Windows that pulls in the
-# WebView2 interop assemblies it needs to draw anything at all.
-backend = "webview.platforms.winforms" if IS_WINDOWS else "webview.platforms.gtk"
-hiddenimports = collect_submodules("uvicorn") + [backend]
+# that actually gets imported, and the backend has to be named here.
+#
+# Only Linux names one. The Windows build draws its window with the Pake shell
+# in pake.json instead: pywebview's winforms backend reaches WebView2 through
+# pythonnet, and that is what opened a window and then never painted the page
+# into it. Leaving the whole stack out keeps a broken path from being taken and
+# drops the .NET interop assemblies from the bundle.
+hiddenimports = collect_submodules("uvicorn")
+webview_excludes = ["webview", "clr", "clr_loader", "pythonnet"]
+
+if not IS_WINDOWS:
+    hiddenimports.append("webview.platforms.gtk")
+    webview_excludes = []
 
 a = Analysis(
     ["desktop.py"],
@@ -37,6 +44,7 @@ a = Analysis(
         "PySide6", "PyQt5", "PyQt6",
         # Optional uvicorn accelerators; desktop.py asks for asyncio/h11 instead.
         "uvloop", "httptools",
+        *webview_excludes,
     ],
     noarchive=False,
 )

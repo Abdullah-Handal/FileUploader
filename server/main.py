@@ -15,7 +15,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import hosts, paths, shortener, uploader
+from app import hosts, paths, shell, shortener, uploader
 from app.uploader import registry
 
 app = FastAPI(title="FileUploader", docs_url=None, redoc_url=None)
@@ -36,6 +36,10 @@ class TextRequest(BaseModel):
 
 class AliasRequest(BaseModel):
     alias: str = ""
+
+
+class OpenRequest(BaseModel):
+    url: str = Field(min_length=1)
 
 
 def safe_filename(raw: str) -> str:
@@ -148,6 +152,32 @@ async def reset() -> dict:
 @app.get("/api/history")
 async def get_history() -> dict:
     return {"entries": uploader.history()}
+
+
+@app.post("/api/open")
+async def open_external(request: OpenRequest) -> dict:
+    """Open a finished link outside the app window.
+
+    The Pake window has no JavaScript bridge to the host, so the page routes
+    external links back through here rather than through ``window.open``.
+    """
+    try:
+        shell.open_url(request.url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(500, f"Could not open the link: {exc}") from exc
+    return {"ok": True}
+
+
+@app.post("/api/reveal")
+async def reveal_texts() -> dict:
+    """Show the saved-text folder in the system file manager."""
+    try:
+        shell.reveal(paths.texts_dir())
+    except OSError as exc:
+        raise HTTPException(500, f"Could not open the folder: {exc}") from exc
+    return {"ok": True}
 
 
 @app.get("/api/config")

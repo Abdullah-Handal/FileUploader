@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tw93/Pake/main/schema/pake.schema.json",
+
+  "url": "http://127.0.0.1:8765",
+  "name": "FileUploaderWindow",
+  "title": "FileUploader",
+  "identifier": "com.pake.fileuploader",
+  "icon": "assets/icon.png",
+  "appVersion": "1.2.0",
+
+  "width": 720,
+  "height": 760,
+  "minWidth": 520,
+  "minHeight": 560,
+
+  "keepBinary": true,
+  "enableDragDrop": false,
+  "forceInternalNavigation": false,
+  "multiInstance": true
+}

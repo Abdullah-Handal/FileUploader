@@ -26,37 +26,50 @@ permanent copy. Pick a file, get a short link, send it. The link dies on its own
 
 ## Install
 
-One file, whichever system you are on. Python and everything else is already
-inside it — there is nothing to install alongside it.
+Python and everything else is already inside — there is nothing to install
+alongside it.
 
 | System | File | Size |
 |---|---|---|
-| Windows 10 / 11, 64-bit | [`fileuploader.exe`](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader.exe) | 18 MB |
+| Windows 10 / 11, 64-bit | [`FileUploader-windows.zip`](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/FileUploader-windows.zip) | 22 MB |
 | Linux, 64-bit | [`fileuploader`](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader) | 48 MB |
 
 ### Windows
 
-Download **[fileuploader.exe](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader.exe)**
-and double-click it. That is the whole install.
+Download **[FileUploader-windows.zip](https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/FileUploader-windows.zip)**,
+right-click it, choose **Extract All**, and run **`fileuploader.exe`** from the
+folder that appears. That is the whole install.
+
+Extract it before running. Opening the zip in Explorer and double-clicking the
+`.exe` inside runs it from a temporary folder without the `window\` beside it,
+and it will fall back to your browser.
+
+The folder holds two programs, and only the first is yours to click:
+
+```
+fileuploader.exe              <- this one
+window\FileUploaderWindow.exe  <- started by it; the window itself
+```
 
 The first launch shows **"Windows protected your PC"** — the blue box. It is not
 a virus warning: it means the file has no code-signing certificate, which costs
 a few hundred a year. Click **More info**, then **Run anyway**. Windows asks
 once and remembers.
 
-To keep it: move the `.exe` somewhere permanent — `Documents\Apps` is fine —
-then right-click it and choose **Pin to Start**.
+To keep it: move the folder somewhere permanent — `Documents\Apps` is fine —
+then right-click `fileuploader.exe` and choose **Pin to Start**.
 
 Or from PowerShell:
 
 ```powershell
-curl.exe -L -o fileuploader.exe https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/fileuploader.exe
-.\fileuploader.exe
+curl.exe -L -o FileUploader-windows.zip https://github.com/Abdullah-Handal/FileUploader/releases/latest/download/FileUploader-windows.zip
+Expand-Archive FileUploader-windows.zip -DestinationPath FileUploader
+.\FileUploader\fileuploader.exe
 ```
 
-Nothing else is needed. The window is drawn by WebView2, which ships with
-Windows 11 and reached Windows 10 through Edge updates. On a machine without it,
-the app opens in your browser instead of its own window.
+The window is drawn by WebView2, which ships with Windows 11 and reached
+Windows 10 through Edge updates. On a machine without it, the app says so and
+opens in your browser instead.
 
 ### Linux
 
@@ -115,11 +128,28 @@ starts. Add `--browser` to open in your browser instead of a native window.
 `install.sh` also takes a path, so it works on a downloaded executable that was
 never built here: `./install.sh ~/Downloads/fileuploader`.
 
-On Windows, `build.bat` does the same thing. You will rarely need it: pushing a
-`v*` tag builds the `.exe` on a GitHub Actions runner and attaches it to the
-release, and the Actions tab can run that build on demand. PyInstaller cannot
-cross-compile, so a Windows executable has to be built on Windows — the runner
-is there so you do not need a Windows machine of your own.
+On Windows there are two halves, and a runner builds both. Pushing a `v*` tag
+produces `FileUploader-windows.zip` and attaches it to the release; the Actions
+tab can run that build on demand. Neither PyInstaller nor Tauri cross-compiles,
+so this has to happen on Windows — the runner is there so you do not need a
+Windows machine of your own.
+
+The window on Windows is **[Pake](https://github.com/tw93/Pake)**, which wraps a
+page in a Tauri (Rust) shell around the system WebView2. It replaced pywebview,
+which reaches WebView2 through pythonnet: that opened a window and then never
+painted the page into it, which is the blank window this fixes. Pake draws only
+the window — the server, the uploading and the history are the same Python as
+everywhere else, which is why the download is a folder rather than one file.
+
+`pake.json` holds the window's settings. It bakes its URL in at build time, so
+the port there and `SHELL_PORT` in `desktop.py` both say `8765` and have to keep
+saying the same thing. `fileuploader.exe` binds that port, starts the window
+beside it, and shuts the server down when the window closes. With no window
+found, no WebView2 installed, or a window that fails to come up, it falls back
+to the browser and says so.
+
+`build.bat` still builds the Python half alone, which is all you need to test
+the server.
 
 The build bundles Python, the server and the interface. It does **not** bundle
 GTK's icon and theme artwork — over 29,000 files that GTK reads from the system
@@ -183,16 +213,24 @@ re-uploading** the file.
 ## How it is put together
 
 ```
-desktop.py        opens a native window over the local server
+desktop.py        serves the app and opens a window over it
   server/main.py  the HTTP API, and serves the interface
   app/hosts.py    the upload hosts and the lifetimes they back
   app/shortener.py  ulvis.net, then is.gd
   app/uploader.py   runs one share on a background thread
   app/paths.py      where things live, in source and once frozen
+  app/shell.py      hands links and folders to the desktop
   web/index.html    the whole interface, one file
 
-.github/workflows/windows.yml   builds the .exe on a Windows runner
+pake.json         the Windows window: a Pake/Tauri shell over WebView2
+assets/icon.png   the mark Pake turns into the .ico
+
+.github/workflows/windows.yml   builds both Windows halves on a runner
 ```
 
-The server binds a random loopback port and the webview points at it. Uploads
-stream, so a 4 GB file never lands in memory.
+Uploads stream, so a 4 GB file never lands in memory.
+
+The server binds a loopback port and the window points at it. On Linux that is
+a random port, because pywebview is told where to look. On Windows it is 8765,
+because a Tauri shell is compiled against one URL and cannot be told another —
+if something else already holds 8765, the app opens in your browser instead.

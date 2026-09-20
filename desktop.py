@@ -8,13 +8,18 @@ application: pick a free port, serve on loopback, and point an OS webview at it.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import socket
 import subprocess
 import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 import webbrowser
+from pathlib import Path
 
 # A windowed build has no console attached, so Python leaves these as None.
 # Anything that writes to them -- a stray print, a library's warning -- then
@@ -24,7 +29,7 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w")  # noqa: SIM115
 
-from app import paths  # noqa: E402
+from app import paths, shell  # noqa: E402
 from server.main import app as fastapi_app  # noqa: E402
 
 log = logging.getLogger("fileuploader")
@@ -39,6 +44,23 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0
 WINDOW_TITLE = "FileUploader"
 WINDOW_SIZE = (720, 760)
 MIN_SIZE = (520, 560)
+
+# The Windows window is a separate binary: a Pake (Tauri) shell that draws the
+# page with WebView2 through Rust rather than through pywebview's pythonnet
+# bridge, which opened a window and then never painted anything into it.
+#
+# A Tauri shell is built against one URL and cannot be told another at launch,
+# so the port it expects is fixed here and in pake.json. They must agree.
+SHELL_PORT = 8765
+SHELL_EXE = "FileUploaderWindow.exe" if IS_WINDOWS else "FileUploaderWindow"
+
+# WebView2's Evergreen runtime registers itself under this GUID. Windows 11
+# ships it and Windows 10 was given it years ago, but it can be absent, and a
+# shell started without it repeats the blank window it was meant to replace.
+_WEBVIEW2_KEY = (
+    r"SOFTWARE\Microsoft\EdgeUpdate\Clients"
+    r"\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+)
 
 
 def _reserve_port(preferred: int = 0) -> tuple[socket.socket, int]:
@@ -159,25 +181,17 @@ class Api:
 
     def reveal_texts(self) -> dict:
         """Open the saved-text folder in the system file manager."""
-        folder = paths.texts_dir()
-        folder.mkdir(parents=True, exist_ok=True)
         try:
-            if IS_WINDOWS:
-                # Hands the folder to Explorer without spawning a shell.
-                os.startfile(folder)  # noqa: S606 - a directory this app owns
-            else:
-                subprocess.Popen(["xdg-open", str(folder)])
+            shell.reveal(paths.texts_dir())
         except OSError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
 
     def open_external(self, url: str) -> dict:
         """Open a link in the real browser instead of inside the app window."""
-        if not url.startswith(("http://", "https://")):
-            return {"ok": False, "error": "Not a URL."}
         try:
-            webbrowser.open(url)
-        except Exception as exc:  # noqa: BLE001
+            shell.open_url(url)
+        except (ValueError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True}
 
@@ -205,6 +219,88 @@ def _open_window(url: str, api: Api) -> bool:
     except Exception as exc:  # noqa: BLE001 - any backend failure falls back
         log.warning("native window unavailable: %s", exc)
         return False
+
+
+def _app_dir() -> Path:
+    """The directory the app was started from, bundled or from source."""
+    if paths.is_frozen():
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _find_shell() -> Path | None:
+    """The Pake window binary shipped beside this one, if it was shipped."""
+    root = _app_dir()
+    for candidate in (root / "window" / SHELL_EXE, root / SHELL_EXE):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _webview2_present() -> bool:
+    """Whether the runtime the Pake shell renders with is installed."""
+    if not IS_WINDOWS:
+        return True
+    import winreg
+
+    # Per-machine installs land in the 32-bit view of HKLM; per-user ones in
+    # HKCU. A version string that is empty or all zeroes means the key was left
+    # behind by an uninstall rather than an install.
+    views = (
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_READ | winreg.KEY_WOW64_32KEY),
+        (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_READ),
+        (winreg.HKEY_CURRENT_USER, winreg.KEY_READ),
+    )
+    for root, access in views:
+        try:
+            with winreg.OpenKey(root, _WEBVIEW2_KEY, 0, access) as handle:
+                version = winreg.QueryValueEx(handle, "pv")[0]
+        except OSError:
+            continue
+        if version and version != "0.0.0.0":
+            return True
+    return False
+
+
+def _ours(port: int) -> bool:
+    """Whether the thing already holding ``port`` is another copy of this app."""
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/config", timeout=2
+        ) as response:
+            return "lifetimes" in json.load(response)
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def _open_shell(shell: Path) -> bool:
+    """Run the Pake window and block until the person closes it.
+
+    The shell knows its own URL -- it was compiled with it -- so there is
+    nothing to pass. False means it would not start at all.
+    """
+    try:
+        process = subprocess.Popen(
+            [str(shell)], cwd=str(shell.parent), creationflags=_NO_WINDOW
+        )
+    except OSError as exc:
+        log.warning("the window would not start: %s", exc)
+        return False
+
+    started = time.monotonic()
+    try:
+        code = process.wait()
+    except KeyboardInterrupt:
+        process.terminate()
+        return True
+
+    # Closing a window takes a person at least a moment. An exit this fast with
+    # something to complain about is the window failing to come up, not being
+    # dismissed, and the browser should still get its turn.
+    if code != 0 and time.monotonic() - started < 3.0:
+        log.warning("the window exited immediately (status %s)", code)
+        return False
+    return True
 
 
 def _parse_args(argv=None) -> argparse.Namespace:
@@ -238,7 +334,37 @@ def main(argv=None) -> int:
 
     paths.data_dir().mkdir(parents=True, exist_ok=True)
 
-    sock, port = _reserve_port(args.port)
+    headless = args.serve or args.browser
+    shell = None if headless else _find_shell()
+    if shell and not _webview2_present():
+        # Starting it anyway would reproduce the empty window this replaced.
+        print(
+            "The WebView2 runtime is missing, so the app window cannot draw.\n"
+            "Install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703 "
+            "-- opening in your browser for now."
+        )
+        shell = None
+
+    # A Tauri shell only ever loads the URL it was built with, so when one is
+    # going to be used the server has to be on that exact port.
+    wanted = args.port or (SHELL_PORT if shell else 0)
+    try:
+        sock, port = _reserve_port(wanted)
+    except OSError as exc:
+        if shell and not args.port and _ours(SHELL_PORT):
+            # Already running. Put a second window on the copy that is serving
+            # rather than starting a competing one.
+            print(f"FileUploader is already running on http://127.0.0.1:{SHELL_PORT}")
+            _open_shell(shell)
+            return 0
+        if args.port:
+            print(f"Port {args.port} is not free: {exc}", file=sys.stderr)
+            return 1
+        # Something unrelated holds the port. The window cannot follow us
+        # anywhere else, so the browser takes over.
+        shell = None
+        sock, port = _reserve_port(0)
+
     url = f"http://127.0.0.1:{port}"
     server = _Server(sock)
 
@@ -259,7 +385,12 @@ def main(argv=None) -> int:
         return 0
 
     try:
-        if args.browser or not _open_window(url, Api()):
+        if shell and _open_shell(shell):
+            return 0
+
+        # No Pake shell here. Linux still has a working GTK webview; on Windows
+        # pywebview is the thing being replaced, so it is not tried at all.
+        if args.browser or IS_WINDOWS or not _open_window(url, Api()):
             if not args.browser:
                 print(f"Opening {url} in your browser (no native window available).")
             webbrowser.open(url)

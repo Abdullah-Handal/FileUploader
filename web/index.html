@@ -655,8 +655,10 @@ async function copy(text, button) {
 }
 
 function openOut(url) {
-  if (native()) window.pywebview.api.open_external(url);
-  else window.open(url, "_blank");
+  if (native()) { window.pywebview.api.open_external(url); return; }
+  // The Pake window has no bridge and blocks window.open, which returns null.
+  // The server runs on this machine, so it can always hand the link over.
+  if (!window.open(url, "_blank")) api("/api/open", { url }).catch(() => {});
 }
 
 // ----------------------------------------------------------------- history
@@ -734,6 +736,7 @@ $("retryBtn").onclick = () => retryWith($("retryAlias").value.trim());
 $("randomBtn").onclick = () => retryWith("");
 $("revealBtn").onclick = () => {
   if (native()) window.pywebview.api.reveal_texts();
+  else api("/api/reveal", {}).catch(() => {});
 };
 
 // Dropping a file always goes through the browser upload path: a webview hands

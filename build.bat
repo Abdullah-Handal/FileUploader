@@ -1,10 +1,19 @@
 @echo off
-REM Build the standalone Windows executable into dist\.
+REM Build the Python half of the Windows app into dist\.
 REM
-REM   build.bat   ->  one self-contained file (dist\fileuploader.exe)
+REM   build.bat   ->  dist\fileuploader.exe
 REM
-REM Only needed if you want to build on your own Windows machine. The GitHub
-REM Actions workflow does the same thing on every v* tag.
+REM That is the server, the upload machinery and the launcher. It is NOT the
+REM whole download: the window is a separate Pake (Tauri) binary that needs
+REM Node and Rust to build, and that the launcher expects to find at
+REM window\FileUploaderWindow.exe beside it. Without it the app still works and
+REM opens in your browser instead of its own window.
+REM
+REM To build both, run the GitHub Actions "Windows build" workflow, which is
+REM what every v* tag does. To build just the window here:
+REM
+REM   npm install -g pake-cli
+REM   pake --config pake.json
 
 setlocal
 cd /d "%~dp0"
@@ -28,4 +37,7 @@ call .venv\Scripts\pyinstaller.exe --noconfirm --clean fileuploader.spec || exit
 if not exist "dist\fileuploader.exe" (echo Build finished but dist\fileuploader.exe is missing. & exit /b 1)
 echo.
 echo Built dist\fileuploader.exe
+echo.
+echo This half opens in your browser. For the app window, put the Pake build
+echo at dist\window\FileUploaderWindow.exe -- see the README.
 endlocal

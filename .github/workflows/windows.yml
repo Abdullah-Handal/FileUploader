@@ -1,10 +1,23 @@
-# Builds the Windows executable.
+# Builds the Windows download.
 #
-# PyInstaller cannot cross-compile, so the only way to produce a .exe from a
-# Linux machine is to build it on a Windows one. This is that machine.
+# It is two binaries, because neither one can do the job alone:
 #
-# Push a v* tag and the executable is attached to that release. Or run it by
-# hand from the Actions tab to get a downloadable artifact without tagging.
+#   fileuploader.exe            PyInstaller. The server, the upload machinery,
+#                               and the launcher. This is what a person clicks.
+#   window\FileUploaderWindow.exe  Pake (Tauri). Draws the page with WebView2
+#                               through Rust, and nothing else.
+#
+# The window used to be pywebview, which reaches WebView2 through pythonnet.
+# That opened a window on Windows and never painted anything into it. Pake
+# replaces only that part; the Python half is unchanged and still what serves
+# the page.
+#
+# Pake bakes its URL in at compile time, so pake.json and SHELL_PORT in
+# desktop.py both say 8765 and have to keep saying the same thing.
+#
+# Neither PyInstaller nor Tauri cross-compiles, so this all happens on Windows.
+# Push a v* tag and the zip is attached to that release. Or run it by hand from
+# the Actions tab to get a downloadable artifact without tagging.
 
 name: Windows build
 
@@ -20,62 +33,170 @@ jobs:
   build:
     runs-on: windows-latest
 
+    env:
+      # Tauri's build tree otherwise lives inside the global npm package,
+      # outside the workspace, where no cache action can reach it.
+      CARGO_TARGET_DIR: ${{ github.workspace }}\pake-target
+      # Pinned, so that the cache key below describes one fixed Rust tree
+      # rather than whatever pake-cli happens to pull in that morning.
+      PAKE_VERSION: "3.17.1"
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          # Not the newest: pythonnet, which pywebview needs to reach the
-          # Windows webview, publishes wheels a version or two behind. Building
-          # it from source on a runner needs a .NET SDK and is not worth it.
+          # Not the newest: PyInstaller supports a release or two behind the
+          # current Python, and there is nothing here that needs the newest.
           python-version: "3.12"
           cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # The runner image already ships Rust; this pins it rather than trusting
+      # whatever the image moved to.
+      - uses: dtolnay/rust-toolchain@stable
+
+      # A cold Tauri build compiles its whole dependency tree and takes ten
+      # minutes or more. Cached, it is a couple.
+      #
+      # Not rust-cache: that one fingerprints a Cargo workspace by running
+      # cargo metadata, and there is no Cargo.toml in this repo to find. The
+      # crate being built belongs to pake-cli, so the cache is keyed on its
+      # version instead and the paths are named outright.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            pake-target
+          key: pake-${{ runner.os }}-${{ env.PAKE_VERSION }}-${{ hashFiles('pake.json') }}
+          restore-keys: |
+            pake-${{ runner.os }}-${{ env.PAKE_VERSION }}-
+            pake-${{ runner.os }}-
+
+      # ------------------------------------------------------------ the window
+
+      - name: Build the Pake window
+        shell: pwsh
+        run: |
+          # pwsh 7.4 turns any non-zero exit from a native command into a
+          # terminating error on the spot. That would kill this step on the
+          # pake line below, before the JSON it wrote could be read -- and
+          # that JSON is the only thing that says what went wrong.
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          npm install -g pake-cli@$env:PAKE_VERSION
+
+          # --json puts logs on stderr and exactly one result object on stdout.
+          pake --config pake.json --json 1> pake-result.json
+          $result = Get-Content pake-result.json -Raw | ConvertFrom-Json
+          if (-not $result.ok) {
+            throw "Pake failed [$($result.error.code)]: $($result.error.message) -- $($result.error.hint)"
+          }
+          foreach ($warning in $result.warnings) { Write-Host "warning: $warning" }
+
+          # keepBinary in pake.json copies the raw .exe into the working
+          # directory beside the installer. The installer is not shipped: it
+          # would install a window with no server behind it.
+          #
+          # Taken from the result rather than found by searching, because a
+          # binary Pake could not copy is only a warning to Pake -- the build
+          # still says ok, and the artifact it records has a size of zero.
+          $binary = $result.outputs | Where-Object { $_.format -eq 'binary' } | Select-Object -First 1
+          if (-not $binary -or $binary.sizeBytes -le 0) {
+            $seen = ($result.outputs | ForEach-Object { "$($_.format) $($_.sizeBytes)B" }) -join ', '
+            throw "Pake reported success but left no usable binary. Outputs: $seen"
+          }
+          if (-not (Test-Path $binary.path)) {
+            throw "Pake recorded $($binary.path) but there is nothing there."
+          }
+
+          New-Item -ItemType Directory -Force -Path staging\window | Out-Null
+          Copy-Item $binary.path staging\window\FileUploaderWindow.exe
+          Write-Host "window: $([math]::Round($binary.sizeBytes / 1MB, 1)) MB from $($binary.path)"
+
+      # ------------------------------------------------------------ the server
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Build
+      - name: Build the server
         env:
           FILEUPLOADER_ONEFILE: "1"
         run: pyinstaller --noconfirm --clean fileuploader.spec
 
+      - name: Assemble
+        shell: pwsh
+        run: |
+          Copy-Item dist\fileuploader.exe staging\fileuploader.exe
+          Get-ChildItem -Recurse staging | Select-Object FullName, Length
+
+      # ------------------------------------------------------------- the check
+
       - name: Smoke test
         shell: pwsh
         run: |
-          # The build is windowed, so it prints nowhere a runner can read.
-          # Whether it serves the interface is the thing worth checking.
-          $exe = "dist\fileuploader.exe"
-          if (-not (Test-Path $exe)) { throw "No executable was produced." }
+          # Windowed builds print nowhere a runner can read, so the only honest
+          # check is whether the pieces actually serve and start.
+          $exe = "staging\fileuploader.exe"
 
-          $proc = Start-Process -PassThru -FilePath $exe -ArgumentList '--serve','--port','8899'
-          try {
-            $ok = $false
+          function Wait-ForPage($port) {
             foreach ($attempt in 1..60) {
               try {
-                $page = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8899/ -TimeoutSec 5
-                if ($page.StatusCode -eq 200) { $ok = $true; break }
+                $page = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$port/" -TimeoutSec 5
+                if ($page.StatusCode -eq 200) { return $true }
               } catch { Start-Sleep -Seconds 1 }
             }
-            if (-not $ok) { throw "The executable never served the interface." }
-
-            $config = Invoke-RestMethod http://127.0.0.1:8899/api/config
-            $labels = ($config.lifetimes | ForEach-Object { $_.label }) -join ', '
-            if ($config.lifetimes.Count -lt 1) { throw "No upload hosts were configured." }
-
-            $size = [math]::Round((Get-Item $exe).Length / 1MB, 1)
-            Write-Host "OK - serves the interface, lifetimes: $labels, ${size} MB"
-          } finally {
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            return $false
           }
+
+          # 1. The server half, on its own, with no window involved.
+          $serve = Start-Process -PassThru -FilePath $exe -ArgumentList '--serve','--port','8899'
+          try {
+            if (-not (Wait-ForPage 8899)) { throw "The server never served the interface." }
+            $config = Invoke-RestMethod http://127.0.0.1:8899/api/config
+            if ($config.lifetimes.Count -lt 1) { throw "No upload hosts were configured." }
+            $labels = ($config.lifetimes | ForEach-Object { $_.label }) -join ', '
+            Write-Host "server OK - lifetimes: $labels"
+          } finally {
+            Stop-Process -Id $serve.Id -Force -ErrorAction SilentlyContinue
+          }
+
+          # 2. The whole thing. Launched with no arguments it must find the
+          # window beside it, bind the one port that window was built against,
+          # and start it. A blank window cannot be caught from here, but a
+          # window that never launches, or a launcher that fell back to the
+          # browser on a random port, both can.
+          $app = Start-Process -PassThru -FilePath $exe
+          try {
+            if (-not (Wait-ForPage 8765)) { throw "The launcher did not serve on the port the window expects (8765)." }
+            Start-Sleep -Seconds 5
+            $window = Get-Process FileUploaderWindow -ErrorAction SilentlyContinue
+            if (-not $window) { throw "The launcher served, but the Pake window never started." }
+            Write-Host "window OK - FileUploaderWindow running as PID $($window.Id)"
+          } finally {
+            Stop-Process -Name FileUploaderWindow -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          }
+
+          $size = [math]::Round(((Get-ChildItem -Recurse staging | Measure-Object Length -Sum).Sum / 1MB), 1)
+          Write-Host "OK - ${size} MB in total"
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path staging\* -DestinationPath FileUploader-windows.zip -Force
 
       - uses: actions/upload-artifact@v4
         with:
           name: fileuploader-windows
-          path: dist/fileuploader.exe
+          path: FileUploader-windows.zip
           if-no-files-found: error
 
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: gh release upload ${{ github.ref_name }} dist/fileuploader.exe --clobber
+        run: gh release upload ${{ github.ref_name }} FileUploader-windows.zip --clobber
