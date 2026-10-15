@@ -17,13 +17,17 @@
 #
 # Neither PyInstaller nor Tauri cross-compiles, so this all happens on Windows.
 # Push a v* tag and the zip is attached to that release. Or run it by hand from
-# the Actions tab to get a downloadable artifact without tagging.
+# the Actions tab to get a downloadable artifact without tagging. Pull requests
+# into master run it too, so a change is built and tried on Windows before it
+# lands.
 
 name: Windows build
 
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -32,6 +36,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 45
 
     env:
       # Tauri's build tree otherwise lives inside the global npm package,
@@ -123,6 +128,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Unit tests
+        run: python -m pytest -q
+
       - name: Build the server
         env:
           FILEUPLOADER_ONEFILE: "1"
@@ -153,6 +161,13 @@ jobs:
             return $false
           }
 
+          # A onefile build is two processes, the unpacker and the Python it
+          # starts, both called fileuploader. Stopping by id leaves the second.
+          function Stop-App {
+            Stop-Process -Name FileUploaderWindow, fileuploader -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+          }
+
           # 1. The server half, on its own, with no window involved.
           $serve = Start-Process -PassThru -FilePath $exe -ArgumentList '--serve','--port','8899'
           try {
@@ -161,8 +176,45 @@ jobs:
             if ($config.lifetimes.Count -lt 1) { throw "No upload hosts were configured." }
             $labels = ($config.lifetimes | ForEach-Object { $_.label }) -join ', '
             Write-Host "server OK - lifetimes: $labels"
+
+            # A second copy must find the port taken, not quietly share it.
+            $second = Start-Process -PassThru -FilePath $exe -ArgumentList '--serve','--port','8899'
+            $null = $second.Handle  # keeps ExitCode readable after it exits
+            if (-not $second.WaitForExit(60000)) { throw "A second copy bound the port the first is serving on." }
+            if ($second.ExitCode -ne 1) { throw "A second copy exited with $($second.ExitCode), expected 1." }
+            Write-Host "port OK - a second copy was refused"
+
+            # Upload a file the way the window does, then download it again.
+            # This goes to the real 3-hour host, so it proves the bundled TLS
+            # certificates and the whole share path, not just that it starts.
+            $sample = Join-Path $env:RUNNER_TEMP "sample.bin"
+            $bytes = New-Object byte[] (1MB)
+            [System.Random]::new().NextBytes($bytes)
+            [IO.File]::WriteAllBytes($sample, $bytes)
+            $want = (Get-FileHash $sample).Hash
+            $base = "http://127.0.0.1:8899"
+            $job = $null
+            foreach ($attempt in 1..3) {
+              Invoke-RestMethod -Method Post -InFile $sample -ContentType application/octet-stream "$base/api/share-upload?name=ci-sample.bin&lifetime=3h" | Out-Null
+              foreach ($i in 1..90) {
+                $job = Invoke-RestMethod "$base/api/status"
+                if ($job.state -in 'done', 'error') { break }
+                Start-Sleep -Seconds 2
+              }
+              if ($job.state -eq 'done') { break }
+              Write-Host "upload attempt ${attempt}: $($job.state) $($job.error)"
+              Invoke-RestMethod -Method Post "$base/api/reset" | Out-Null
+              Start-Sleep -Seconds 15
+            }
+            if ($job.state -ne 'done') { throw "Uploading never finished: $($job.state) $($job.error)" }
+            $back = Join-Path $env:RUNNER_TEMP "back.bin"
+            Invoke-WebRequest -UseBasicParsing $job.direct -OutFile $back
+            if ((Get-FileHash $back).Hash -ne $want) { throw "The file downloaded from $($job.direct) differs from the one uploaded." }
+            Write-Host "round trip OK - $($bytes.Length) bytes via $($job.direct), link $($job.link) $($job.error)"
+            $left = Get-ChildItem $env:TEMP -Directory -Filter 'fileuploader-*' -ErrorAction SilentlyContinue
+            if ($left) { throw "The temporary copy was not cleaned up: $($left.FullName)" }
           } finally {
-            Stop-Process -Id $serve.Id -Force -ErrorAction SilentlyContinue
+            Stop-App
           }
 
           # 2. The whole thing. Launched with no arguments it must find the
@@ -178,8 +230,7 @@ jobs:
             if (-not $window) { throw "The launcher served, but the Pake window never started." }
             Write-Host "window OK - FileUploaderWindow running as PID $($window.Id)"
           } finally {
-            Stop-Process -Name FileUploaderWindow -Force -ErrorAction SilentlyContinue
-            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+            Stop-App
           }
 
           $size = [math]::Round(((Get-ChildItem -Recurse staging | Measure-Object Length -Sum).Sum / 1MB), 1)
