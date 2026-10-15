@@ -41,3 +41,18 @@ def test_empty_file_is_refused(tmp_path, monkeypatch):
     empty.write_bytes(b"")
     with pytest.raises(hosts.UploadError, match="empty"):
         real_send(empty, "3h")
+
+
+class Page:
+    status_code = 403
+    text = "<!DOCTYPE html><html><head><title>Just a moment...</title>"
+
+    def json(self):
+        raise ValueError
+
+
+def test_a_bot_check_page_is_reported_briefly(monkeypatch):
+    monkeypatch.setattr(shortener.requests, "get", lambda *a, **k: Page())
+    for provider in (shortener._ulvis, shortener._is_gd):
+        with pytest.raises(shortener.ShortenError, match=r"^no usable answer \(HTTP 403\)$"):
+            provider("https://host.example/f", "")
