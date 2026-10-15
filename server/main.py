@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -122,29 +122,47 @@ async def share_text(request: TextRequest) -> dict:
 
 @app.post("/api/share-upload")
 async def share_upload(
-    file: UploadFile = File(...),
-    alias: str = Form(""),
-    lifetime: str = Form(hosts.DEFAULT),
+    request: Request, name: str = "", alias: str = "", lifetime: str = hosts.DEFAULT
 ) -> dict:
-    """Share a file sent through the browser.
+    """Share a file sent through the page, as the raw request body.
 
     Used when a file was dropped onto the window, or when there is no native
-    picker to get a path from. Picking natively takes /api/share and copies
-    nothing.
+    picker to get a path from -- which is always, in the Pake window. Picking
+    natively takes /api/share and copies nothing.
+
+    The body goes straight to disk as it arrives. A multipart form would be
+    spooled to one temporary file by the parser and then copied to another,
+    needing twice a 4 GB file's size in free space and stalling the server for
+    the copy.
     """
     _check(alias, lifetime)
+    if registry.busy():
+        raise HTTPException(409, "An upload is already running.")
 
-    name = safe_filename(file.filename or "") or "upload.bin"
+    host = hosts.HOSTS[lifetime]
+    too_big = HTTPException(
+        413, f"That file is too big for a {host.label} link ({host.origin} accepts {host.max_label})."
+    )
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > host.max_bytes:
+        raise too_big
+
     temp_dir = Path(tempfile.mkdtemp(prefix="fileuploader-"))
-    destination = temp_dir / name
-    with destination.open("wb") as out:
-        shutil.copyfileobj(file.file, out, length=1024 * 1024)
-
+    destination = temp_dir / (safe_filename(name) or "upload.bin")
     try:
+        written = 0
+        with destination.open("wb") as out:
+            async for chunk in request.stream():
+                written += len(chunk)
+                if written > host.max_bytes:
+                    raise too_big
+                out.write(chunk)
         registry.start(destination, alias.strip(), lifetime, cleanup=True)
-    except hosts.UploadError as exc:
+    except BaseException as exc:  # includes the sender going away mid-file
         shutil.rmtree(temp_dir, ignore_errors=True)
-        raise HTTPException(400, str(exc)) from exc
+        if isinstance(exc, hosts.UploadError):
+            raise HTTPException(400, str(exc)) from exc
+        raise
     return {"ok": True}
 
 

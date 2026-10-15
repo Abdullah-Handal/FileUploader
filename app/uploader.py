@@ -160,6 +160,7 @@ class Registry:
             if cleanup:
                 try:
                     path.unlink()
+                    path.parent.rmdir()  # the private temp folder; only if now empty
                 except OSError:
                     pass
 

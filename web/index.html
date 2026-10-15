@@ -391,10 +391,10 @@ function show(section) {
   }
 }
 
-async function api(path, body, isForm) {
+async function api(path, body, raw) {
   const options = { method: body === undefined ? "GET" : "POST" };
   if (body !== undefined) {
-    if (isForm) { options.body = body; }
+    if (raw) { options.body = body; }
     else { options.headers = { "Content-Type": "application/json" }; options.body = JSON.stringify(body); }
   }
   const response = await fetch(path, options);
@@ -537,15 +537,19 @@ async function send() {
     } else if (picked) {
       await api("/api/share", { path: picked.path, alias: alias, lifetime: lifetime });
     } else if (pickedBlob) {
-      const form = new FormData();
-      form.append("file", pickedBlob);
-      form.append("alias", alias);
-      form.append("lifetime", lifetime);
-      await api("/api/share-upload", form, true);
+      // The file itself is the body, so the server can write it straight to disk.
+      // Handing over a few GB takes a while, and fetch reports no progress.
+      show("working");
+      $("workName").textContent = pickedBlob.name;
+      $("meter").classList.add("idle");
+      $("workCounts").textContent = "Handing the file to the app…";
+      const query = new URLSearchParams({ name: pickedBlob.name, alias: alias, lifetime: lifetime });
+      await api("/api/share-upload?" + query, pickedBlob, true);
     } else {
       throw new Error("Pick a file first.");
     }
   } catch (error) {
+    show("form");
     fail(error.message);
     $("go").disabled = false;
     return;

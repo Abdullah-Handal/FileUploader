@@ -5,7 +5,6 @@ requests-toolbelt==1.0.0
 # Local server behind the window
 fastapi==0.121.2
 uvicorn==0.42.0
-python-multipart==0.0.20
 
 # The native window.
 #
