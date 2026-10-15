@@ -1,7 +1,7 @@
 # FileUploader
 
-A small Linux desktop app for handing someone a file without handing them a
-permanent copy. Pick a file, get a short link, send it. The link dies on its own.
+A small desktop app for Windows and Linux for handing someone a file without
+handing them a permanent copy. Pick a file, get a short link, send it. The link dies on its own.
 
 ```
 ┌────────────────────────────────────────┐
@@ -108,7 +108,9 @@ opens in your browser instead.
   The text file is kept on your machine after the link expires.
 - **Choose how long it lives.** The lifetime picks the host, because that is the
   only thing you actually care about.
-- **Name your own link.** Optional. Blank gives you a random one.
+- **Name your own link.** Optional. Blank gives you a random one. A link is
+  public: anyone who guesses the name can download the file until it expires,
+  so pick something that is not easy to guess for anything private.
 
 ## Building it yourself
 
@@ -120,6 +122,13 @@ opens in your browser instead.
 
 First run creates the virtualenv and installs dependencies; after that it just
 starts. Add `--browser` to open in your browser instead of a native window.
+
+Tests need no network and no window:
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+```
 
 ### Making the executable
 
@@ -161,7 +170,7 @@ anyway, and which would otherwise triple the size.
 
 ### Requirements
 
-Python 3.11+, plus the WebKit packages from the Download section above.
+Python 3.11+, plus the WebKit packages from the Linux install section above.
 
 PyGObject is deliberately not in `requirements.txt`. Building it from source
 needs cairo and girepository development headers, and every Linux desktop ships
@@ -175,9 +184,11 @@ uses that one.
 | Text snippets you shared | `~/.local/share/fileuploader/texts/` | `%LOCALAPPDATA%\fileuploader\texts\` |
 | Recent links | `~/.local/share/fileuploader/history.json` | `%LOCALAPPDATA%\fileuploader\history.json` |
 
-Files you pick are **never copied** — only read and uploaded. Dropped files are
-copied to a temporary directory and deleted afterwards, because a webview hands
-over the file's contents rather than its path.
+Files you pick in the Linux window are **never copied** — only read and
+uploaded. Dropped files, and every file on Windows (the Pake window has no
+native picker), are copied to a temporary folder and deleted once uploaded,
+because a webview hands over the file's contents rather than its path. That
+copy needs as much free disk space as the file itself.
 
 ## Hosts
 
@@ -232,7 +243,13 @@ assets/icon.png   the mark Pake turns into the .ico
 .github/workflows/windows.yml   builds both Windows halves on a runner
 ```
 
-Uploads stream, so a 4 GB file never lands in memory.
+Uploads stream, so a 4 GB file never lands in memory: a file handed over by the
+page is written to disk as it arrives, and the upload to the host reads it back
+in chunks.
+
+The server only answers its own page. Requests must carry a loopback `Host`, and
+an `Origin`, when there is one, that matches it — otherwise any website open in
+your browser could ask it to upload a file from your disk.
 
 The server binds a loopback port and the window points at it. On Linux that is
 a random port, because pywebview is told where to look. On Windows it is 8765,

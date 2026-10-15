@@ -71,7 +71,10 @@ def _reserve_port(preferred: int = 0) -> tuple[socket.socket, int]:
     is running, including a second copy of this app.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # On Windows SO_REUSEADDR means "share a port that is in use": a second
+    # copy would bind 8765 beside the first instead of finding it running.
+    if not IS_WINDOWS:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", preferred))
     sock.listen(128)
     return sock, sock.getsockname()[1]
@@ -303,6 +306,16 @@ def _open_shell(shell: Path) -> bool:
     return True
 
 
+def _notice(message: str) -> None:
+    """Tell the person something. A windowed Windows build has no console, so
+    there it takes a message box; anything printed would go nowhere."""
+    print(message)
+    if IS_WINDOWS:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, WINDOW_TITLE, 0x40)  # MB_ICONINFORMATION
+
+
 def _parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="fileuploader",
@@ -338,7 +351,7 @@ def main(argv=None) -> int:
     shell = None if headless else _find_shell()
     if shell and not _webview2_present():
         # Starting it anyway would reproduce the empty window this replaced.
-        print(
+        _notice(
             "The WebView2 runtime is missing, so the app window cannot draw.\n"
             "Install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703 "
             "-- opening in your browser for now."

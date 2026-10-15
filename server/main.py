@@ -10,8 +10,10 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -19,6 +21,27 @@ from app import hosts, paths, shell, shortener, uploader
 from app.uploader import registry
 
 app = FastAPI(title="FileUploader", docs_url=None, redoc_url=None)
+
+LOOPBACK = {"127.0.0.1", "localhost"}
+
+
+@app.middleware("http")
+async def own_page_only(request: Request, call_next):
+    """Answer only the page this server serves.
+
+    Loopback keeps other machines out, but not other web pages: any site open in
+    the browser can POST here, and one that rebinds its DNS name to 127.0.0.1
+    can read the answers too. /api/share uploads whatever path it is handed, so
+    either would let a website publish this machine's files. A rebound name
+    still arrives as its own Host, and a foreign page as its own Origin.
+    """
+    host = request.headers.get("host", "")
+    origin = request.headers.get("origin")
+    if urlsplit("//" + host).hostname not in LOOPBACK or (
+        origin is not None and urlsplit(origin).netloc != host
+    ):
+        return JSONResponse({"detail": "Forbidden."}, status_code=403)
+    return await call_next(request)
 
 
 class ShareRequest(BaseModel):
@@ -42,11 +65,17 @@ class OpenRequest(BaseModel):
     url: str = Field(min_length=1)
 
 
+# Windows opens these as devices, whatever the extension: "con.txt" is the console.
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
 def safe_filename(raw: str) -> str:
     """Reduce user input to a bare filename that cannot escape its directory."""
     name = Path((raw or "").strip().replace("\\", "/")).name
-    name = re.sub(r'[\x00-\x1f<>:"|?*]', "", name).strip(". ")
-    return name[:120]
+    name = re.sub(r'[\x00-\x1f<>:"|?*]', "", name)[:120].strip(". ")
+    if name.split(".")[0].strip().upper() in _RESERVED:
+        name = "_" + name
+    return name
 
 
 def _check(alias: str, lifetime: str) -> None:
@@ -99,29 +128,47 @@ async def share_text(request: TextRequest) -> dict:
 
 @app.post("/api/share-upload")
 async def share_upload(
-    file: UploadFile = File(...),
-    alias: str = Form(""),
-    lifetime: str = Form(hosts.DEFAULT),
+    request: Request, name: str = "", alias: str = "", lifetime: str = hosts.DEFAULT
 ) -> dict:
-    """Share a file sent through the browser.
+    """Share a file sent through the page, as the raw request body.
 
     Used when a file was dropped onto the window, or when there is no native
-    picker to get a path from. Picking natively takes /api/share and copies
-    nothing.
+    picker to get a path from -- which is always, in the Pake window. Picking
+    natively takes /api/share and copies nothing.
+
+    The body goes straight to disk as it arrives. A multipart form would be
+    spooled to one temporary file by the parser and then copied to another,
+    needing twice a 4 GB file's size in free space and stalling the server for
+    the copy.
     """
     _check(alias, lifetime)
+    if registry.busy():
+        raise HTTPException(409, "An upload is already running.")
 
-    name = safe_filename(file.filename or "") or "upload.bin"
+    host = hosts.HOSTS[lifetime]
+    too_big = HTTPException(
+        413, f"That file is too big for a {host.label} link ({host.origin} accepts {host.max_label})."
+    )
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > host.max_bytes:
+        raise too_big
+
     temp_dir = Path(tempfile.mkdtemp(prefix="fileuploader-"))
-    destination = temp_dir / name
-    with destination.open("wb") as out:
-        shutil.copyfileobj(file.file, out, length=1024 * 1024)
-
+    destination = temp_dir / (safe_filename(name) or "upload.bin")
     try:
+        written = 0
+        with destination.open("wb") as out:
+            async for chunk in request.stream():
+                written += len(chunk)
+                if written > host.max_bytes:
+                    raise too_big
+                out.write(chunk)
         registry.start(destination, alias.strip(), lifetime, cleanup=True)
-    except hosts.UploadError as exc:
+    except BaseException as exc:  # includes the sender going away mid-file
         shutil.rmtree(temp_dir, ignore_errors=True)
-        raise HTTPException(400, str(exc)) from exc
+        if isinstance(exc, hosts.UploadError):
+            raise HTTPException(400, str(exc)) from exc
+        raise
     return {"ok": True}
 
 

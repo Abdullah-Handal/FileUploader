@@ -34,6 +34,18 @@ class ShortenError(Exception):
     """No provider would create the link."""
 
 
+def _reason(response) -> str:
+    """A short, readable reason from a refusal that is not a link.
+
+    A web page in place of an answer is usually a bot check in front of the
+    API, and its HTML is no use to anyone reading the error.
+    """
+    body = response.text.strip()
+    if not body or body.startswith("<"):
+        return f"no usable answer (HTTP {response.status_code})"
+    return body[:200]
+
+
 class AliasTakenError(ShortenError):
     """That alias is unavailable. The caller should offer to pick another."""
 
@@ -67,7 +79,7 @@ def _ulvis(long_url: str, alias: str) -> str:
             if "already taken" in lowered
             else "ulvis.net rejected that name. Try a different one."
         )
-    raise ShortenError(body[:200] or f"ulvis.net gave no answer (HTTP {response.status_code}).")
+    raise ShortenError(_reason(response))
 
 
 def _is_gd(long_url: str, alias: str) -> str:
@@ -81,10 +93,10 @@ def _is_gd(long_url: str, alias: str) -> str:
         payload = response.json()
     except ValueError:
         # is.gd returns plain-text errors even when asked for JSON.
-        raise ShortenError(response.text.strip()[:200] or "is.gd gave no answer.")
+        raise ShortenError(_reason(response))
 
     short_url = payload.get("shorturl")
-    if short_url:
+    if isinstance(short_url, str) and short_url.startswith(("https://", "http://")):
         return short_url
 
     message = str(payload.get("errormessage") or "").strip() or "is.gd rejected the request."

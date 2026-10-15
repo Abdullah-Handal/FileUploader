@@ -80,7 +80,10 @@ class Registry:
 
     def busy(self) -> bool:
         with self._lock:
-            return self._job.state in ("uploading", "shortening")
+            return self._busy()
+
+    def _busy(self) -> bool:
+        return self._job.state in ("uploading", "shortening")
 
     def _set(self, **fields) -> None:
         with self._lock:
@@ -89,8 +92,11 @@ class Registry:
             self._job.revision += 1
 
     def reset(self) -> None:
+        """Forget a finished share. One still running is left alone: its thread
+        would carry on writing into the fresh job and mark it done."""
         with self._lock:
-            self._job = Job()
+            if not self._busy():
+                self._job = Job()
 
     def start(self, file_path, alias="", lifetime=hosts.DEFAULT, cleanup=False) -> None:
         """Begin a share in the background. Raises if one is already running.
@@ -99,9 +105,6 @@ class Registry:
         browser-mode upload has to make. Files picked natively, and saved text
         snippets, are left alone.
         """
-        if self.busy():
-            raise UploadError("An upload is already running.")
-
         host = hosts.get(lifetime)
         path = Path(file_path)
         if not path.is_file():
@@ -115,6 +118,10 @@ class Registry:
             )
 
         with self._lock:
+            # Checked under the same lock that claims the job, so two requests
+            # can never both start one.
+            if self._busy():
+                raise UploadError("An upload is already running.")
             self._job = Job(
                 state="uploading", name=path.name, total=size, lifetime=lifetime
             )
@@ -133,13 +140,17 @@ class Registry:
         upload of what might be several gigabytes.
         """
         with self._lock:
+            if self._busy():
+                raise UploadError("A link is already being made.")
             direct = self._job.direct
             name = self._job.name
             lifetime = self._job.lifetime
-        if not direct:
-            raise UploadError("Nothing has been uploaded yet.")
-
-        self._set(state="shortening", alias_rejected=False, error="")
+            if not direct:
+                raise UploadError("Nothing has been uploaded yet.")
+            self._job.state = "shortening"
+            self._job.alias_rejected = False
+            self._job.error = ""
+            self._job.revision += 1
         threading.Thread(
             target=self._shorten_step,
             args=(direct, alias, name, lifetime),
@@ -160,6 +171,7 @@ class Registry:
             if cleanup:
                 try:
                     path.unlink()
+                    path.parent.rmdir()  # the private temp folder; only if now empty
                 except OSError:
                     pass
 
@@ -222,9 +234,16 @@ def history() -> list:
     now = int(time.time())
     entries = []
     for raw in _read_history():
+        # A hand-edited or half-written file must not take the list down with it.
+        if not isinstance(raw, dict) or not isinstance(raw.get("link"), str):
+            continue
         entry = dict(raw)
         host = hosts.HOSTS.get(entry.get("lifetime"))
         hours = host.hours if host else 72
-        entry["expired"] = (now - int(entry.get("created", 0))) > hours * 3600
+        try:
+            created = int(entry.get("created", 0))
+        except (TypeError, ValueError):
+            created = 0
+        entry["expired"] = (now - created) > hours * 3600
         entries.append(entry)
     return entries
