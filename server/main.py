@@ -65,11 +65,17 @@ class OpenRequest(BaseModel):
     url: str = Field(min_length=1)
 
 
+# Windows opens these as devices, whatever the extension: "con.txt" is the console.
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
 def safe_filename(raw: str) -> str:
     """Reduce user input to a bare filename that cannot escape its directory."""
     name = Path((raw or "").strip().replace("\\", "/")).name
-    name = re.sub(r'[\x00-\x1f<>:"|?*]', "", name).strip(". ")
-    return name[:120]
+    name = re.sub(r'[\x00-\x1f<>:"|?*]', "", name)[:120].strip(". ")
+    if name.split(".")[0].strip().upper() in _RESERVED:
+        name = "_" + name
+    return name
 
 
 def _check(alias: str, lifetime: str) -> None:
