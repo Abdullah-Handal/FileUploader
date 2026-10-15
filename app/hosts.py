@@ -147,4 +147,9 @@ def send(path, host_id, on_progress=None) -> str:
             f"That file is too big for a {host.label} link "
             f"({host.origin} accepts {host.max_label})."
         )
-    return host.send(path, on_progress)
+    url = host.send(path, on_progress)
+    # The page turns this into a clickable link, so a host that answers with
+    # anything but a web address (say, javascript:) must not get that far.
+    if not url.startswith(("https://", "http://")):
+        raise UploadError(f"{host.origin} sent back something that is not a link.")
+    return url

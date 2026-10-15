@@ -84,7 +84,7 @@ def _is_gd(long_url: str, alias: str) -> str:
         raise ShortenError(response.text.strip()[:200] or "is.gd gave no answer.")
 
     short_url = payload.get("shorturl")
-    if short_url:
+    if isinstance(short_url, str) and short_url.startswith(("https://", "http://")):
         return short_url
 
     message = str(payload.get("errormessage") or "").strip() or "is.gd rejected the request."
