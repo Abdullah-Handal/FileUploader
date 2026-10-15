@@ -5,6 +5,9 @@ requests-toolbelt==1.0.0
 # Local server behind the window
 fastapi==0.121.2
 uvicorn==0.42.0
+# Not used directly, but it parses every request and serves the page. Pinned so
+# a build cannot pick up an untested release.
+starlette==0.49.3
 
 # The native window.
 #
