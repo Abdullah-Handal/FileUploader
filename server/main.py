@@ -10,8 +10,10 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -19,6 +21,27 @@ from app import hosts, paths, shell, shortener, uploader
 from app.uploader import registry
 
 app = FastAPI(title="FileUploader", docs_url=None, redoc_url=None)
+
+LOOPBACK = {"127.0.0.1", "localhost"}
+
+
+@app.middleware("http")
+async def own_page_only(request: Request, call_next):
+    """Answer only the page this server serves.
+
+    Loopback keeps other machines out, but not other web pages: any site open in
+    the browser can POST here, and one that rebinds its DNS name to 127.0.0.1
+    can read the answers too. /api/share uploads whatever path it is handed, so
+    either would let a website publish this machine's files. A rebound name
+    still arrives as its own Host, and a foreign page as its own Origin.
+    """
+    host = request.headers.get("host", "")
+    origin = request.headers.get("origin")
+    if urlsplit("//" + host).hostname not in LOOPBACK or (
+        origin is not None and urlsplit(origin).netloc != host
+    ):
+        return JSONResponse({"detail": "Forbidden."}, status_code=403)
+    return await call_next(request)
 
 
 class ShareRequest(BaseModel):
